@@ -1,96 +1,97 @@
-# civil3d-mcp
+# Civil 3D MCP Server
 
-English | [简体中文](README_zh.md)
+An MCP (Model Context Protocol) server that enables AI assistants (Claude, Cline, etc.) to interact with Autodesk Civil 3D through natural language.
 
-## Description
+## Architecture
 
-civil3d-mcp allows you to interact with Autodesk Civil 3D using the MCP protocol through MCP-supported clients (such as Claude, Cline, etc.).
+```
+┌─────────────────┐     stdio      ┌──────────────────┐     TCP/JSON-RPC    ┌──────────────────┐
+│   AI Assistant   │ ◄────────────► │  MCP Server (TS) │ ◄──────────────────► │  Civil 3D Plugin │
+│ (Claude, Cline)  │               │   Node.js         │     port 8080       │   (.NET 8.0 C#)  │
+└─────────────────┘               └──────────────────┘                      └──────────────────┘
+                                                                                     │
+                                                                              Civil 3D API
+                                                                            (Surfaces, Alignments,
+                                                                             Points, Corridors...)
+```
 
-This project is the server side (providing Tools to AI), and you need to use a Civil 3D MCP plugin (driving Civil 3D) in conjunction.
+The system has two components:
+1. **MCP Server** (TypeScript/Node.js) — Communicates with AI assistants via MCP protocol
+2. **Civil 3D Plugin** (C# .NET 8.0) — Runs inside Civil 3D and executes API commands
 
-Join [Discord](https://discord.gg/cGzUGurq) | [QQ Group](http://qm.qq.com/cgi-bin/qm/qr?_wv=1027&k=kLnQiFVtYBytHm7R58KFoocd3mzU_9DR&authKey=fyXDOBmXP7FMkXAWjddWZumblxKJH7ZycYyLp40At3t9%2FOfSZyVO7zyYgIROgSHF&noverify=0&group_code=792379482)
+## Available Tools
 
-## Features
+| Tool | Actions | Description |
+|------|---------|-------------|
+| `civil3d_health` | health | Check plugin connectivity |
+| `civil3d_drawing` | info, settings, save, undo, redo, list_object_types, get_selected | Drawing operations |
+| `civil3d_surface` | list, get, get_elevation, get_statistics, create, delete, add_points, add_breakline, add_boundary, extract_contours, compute_volume | Surface management |
+| `civil3d_alignment` | list, get, create, delete, station_to_point, point_to_station | Alignment operations |
+| `civil3d_profile` | list, get, get_elevation, create_from_surface, create_layout, delete | Profile management |
+| `civil3d_corridor` | list, get, rebuild, get_surfaces, get_feature_lines, compute_volumes | Corridor operations |
+| `civil3d_pipe` | list_networks, get_network, get_pipe, get_structure, create_network, add_pipe, add_structure, check_interference | Pipe networks |
+| `civil3d_point` | list, get, create, delete, list_groups, import | COGO points |
+| `civil3d_geometry` | create_line, create_polyline, create_3d_polyline, create_text, create_mtext | Basic AutoCAD geometry |
 
-- Allow AI to get data from the Civil 3D project
-- Allow AI to drive Civil 3D to create, modify, and delete elements
-- Send AI-generated code to Civil 3D to execute (may not be successful, successful rate is higher in some simple scenarios with clear requirements)
+## Setup
 
-## Requirements
-
-- nodejs 18+
-
-> Complete installation environment still needs to consider the needs of the Civil 3D MCP plugin, please refer to its documentation.
-
-## Installation
-
-### 1. Build local MCP service
-
-Install dependencies
+### 1. Build the MCP Server
 
 ```bash
 npm install
-```
-
-Build
-
-```bash
 npm run build
 ```
 
-### 2. Client configuration
+### 2. Build the Civil 3D Plugin
 
-**Claude client**
+1. Copy the required DLLs from your Civil 3D installation to `C_References/` (see [C_References/README.md](C_References/README.md))
+2. Build the plugin:
 
-Claude client -> Settings > Developer > Edit Config > claude_desktop_config.json
+```bash
+cd plugin/Civil3dMcpPlugin
+dotnet build
+```
+
+### 3. Load the Plugin in Civil 3D
+
+1. Open Civil 3D 2025+
+2. Type `NETLOAD` in the command line
+3. Browse to `plugin/Civil3dMcpPlugin/bin/Debug/net8.0-windows/Civil3dMcpPlugin.dll`
+4. The plugin starts automatically. Use `C3DMCPSTATUS` to verify.
+
+### 4. Configure Your AI Assistant
+
+**Claude Desktop** — Add to `claude_desktop_config.json`:
 
 ```json
 {
-    "mcpServers": {
-        "civil3d-mcp": {
-            "command": "node",
-            "args": ["<path to the built file>\\build\\index.js"]
-        }
+  "mcpServers": {
+    "civil3d": {
+      "command": "node",
+      "args": ["/path/to/civil3d-mcp/build/index.js"]
     }
+  }
 }
 ```
 
-Restart the Claude client. When you see the hammer icon, it means the connection to the MCP service is normal. (example shows Civil 3D, will be Civil 3D)
+## Environment Variables
 
-![claude](./assets/claude.png)
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CIVIL3D_HOST` | `localhost` | Civil 3D plugin host |
+| `CIVIL3D_PORT` | `8080` | Civil 3D plugin port |
+| `CIVIL3D_CONNECT_TIMEOUT` | `5000` | Connection timeout (ms) |
+| `CIVIL3D_COMMAND_TIMEOUT` | `120000` | Command execution timeout (ms) |
+| `LOG_LEVEL` | `info` | Log level (debug, info, warn, error) |
 
-## Framework
+## Plugin Commands
 
-```mermaid
-flowchart LR
-	CladueDesktop --> civil3d-mcp --> SocketService--commandName-->CommandlSet--command-->CommandExecute
-	CommandManager --> CommandlSet
-	CommandExecute --executeResult--> SocketService
-	CommandProject1 --> CommandManager
-	CommandProject2 --> CommandManager
-	CommandProject... --> CommandManager
-	subgraph ide1 [MCPClient]
-	CladueDesktop
-	end
-	subgraph ide2 [MCPServer]
-	civil3d-mcp
-	end
-	subgraph ide3 [Civil 3D]
-			subgraph ide3.1 [civil3d-mcp-plugin]
-				SocketService
-				CommandlSet
-				CommandManager
-				CommandExecute
-			end
-	end
-```
+| Command | Description |
+|---------|-------------|
+| `C3DMCPSTART` | Start the TCP listener |
+| `C3DMCPSTOP` | Stop the TCP listener |
+| `C3DMCPSTATUS` | Check listener status |
 
-## Supported Tools
+## License
 
-| Name                               | Description                                                                                                |
-| ---------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `get_drawing_info`                 | Retrieves basic information about the active Civil 3D drawing.                                             |
-| `list_civil_object_types`          | Lists major Civil 3D object types available or present in the current drawing (e.g., Alignments, Surfaces). |
-| `get_selected_civil_objects_info`  | Gets basic properties of currently selected Civil 3D objects. Can limit the number of returned objects.    |
-| `create_cogo_point`                | Creates a new COGO (Coordinate Geometry) point in the Civil 3D drawing.                                    |
-| `create_line_segment`              | Creates a simple line segment in the Civil 3D drawing.                                                     |
+ISC

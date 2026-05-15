@@ -1,2 +1,13 @@
 build/
 node_modules/
+
+# C# Plugin
+plugin/**/bin/
+plugin/**/obj/
+*.dll
+*.pdb
+*.user
+*.suo
+
+# Civil 3D References (proprietary DLLs)
+C_References/*.dll
