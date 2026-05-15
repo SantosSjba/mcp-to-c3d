@@ -1,100 +1,71 @@
 using System.Text.Json.Nodes;
+using Autodesk.AutoCAD.ApplicationServices;
+using Autodesk.Civil.ApplicationServices;
+using App = Autodesk.AutoCAD.ApplicationServices.Application;
 
 namespace Civil3DMcpPlugin;
 
 /// <summary>
-/// Routes JSON-RPC method names to the appropriate command handler.
-/// Each method string maps directly to a static async method.
+/// Routes JSON-RPC methods. With code execution architecture,
+/// only 2 methods are needed: executeCode and listSkills.
 /// </summary>
 public static class CommandDispatcher
 {
-  public static Task<object?> DispatchAsync(
+  public static async Task<object?> DispatchAsync(
     string method,
     JsonObject? parameters,
     CancellationToken cancellationToken)
   {
     return method switch
     {
-      // Plugin / Health
-      "getCivil3DHealth" => DrawingCommands.GetCivil3DHealthAsync(),
+      "executeCode" => await ExecuteCodeAsync(parameters),
+      "getCivil3DHealth" => await GetHealthAsync(),
 
-      // Drawing operations
-      "getDrawingInfo" => DrawingCommands.GetDrawingInfoAsync(),
-      "getDrawingSettings" => DrawingCommands.GetDrawingSettingsAsync(),
-      "saveDrawing" => DrawingCommands.SaveDrawingAsync(parameters),
-      "newDrawing" => DrawingCommands.NewDrawingAsync(parameters),
-      "undoDrawing" => DrawingCommands.UndoDrawingAsync(parameters),
-      "redoDrawing" => DrawingCommands.RedoDrawingAsync(parameters),
-      "listCivilObjectTypes" => DrawingCommands.ListCivilObjectTypesAsync(),
-      "getSelectedCivilObjectsInfo" => DrawingCommands.GetSelectedCivilObjectsInfoAsync(parameters),
-
-      // Geometry (AutoCAD)
-      "createLineSegment" => GeometryCommands.CreateLineSegmentAsync(parameters),
-      "createPolyline" => GeometryCommands.CreatePolylineAsync(parameters),
-      "create3dPolyline" => GeometryCommands.Create3dPolylineAsync(parameters),
-      "createText" => GeometryCommands.CreateTextAsync(parameters),
-      "createMText" => GeometryCommands.CreateMTextAsync(parameters),
-
-      // COGO Points
-      "listCogoPoints" => PointCommands.ListCogoPointsAsync(parameters),
-      "getCogoPoint" => PointCommands.GetCogoPointAsync(parameters),
-      "createCogoPoints" => PointCommands.CreateCogoPointsAsync(parameters),
-      "deleteCogoPoints" => PointCommands.DeleteCogoPointsAsync(parameters),
-      "listPointGroups" => PointCommands.ListPointGroupsAsync(),
-      "importCogoPoints" => PointCommands.ImportCogoPointsAsync(parameters),
-
-      // Surfaces
-      "listSurfaces" => SurfaceCommands.ListSurfacesAsync(),
-      "getSurface" => SurfaceCommands.GetSurfaceAsync(parameters),
-      "getSurfaceElevation" => SurfaceCommands.GetSurfaceElevationAsync(parameters),
-      "getSurfaceStatistics" => SurfaceCommands.GetSurfaceStatisticsAsync(parameters),
-      "createSurface" => SurfaceCommands.CreateSurfaceAsync(parameters),
-      "deleteSurface" => SurfaceCommands.DeleteSurfaceAsync(parameters),
-      "addSurfacePoints" => SurfaceCommands.AddSurfacePointsAsync(parameters),
-      "addSurfaceBreakline" => SurfaceCommands.AddSurfaceBreaklineAsync(parameters),
-      "addSurfaceBoundary" => SurfaceCommands.AddSurfaceBoundaryAsync(parameters),
-      "extractSurfaceContours" => SurfaceCommands.ExtractSurfaceContoursAsync(parameters),
-      "computeSurfaceVolume" => SurfaceCommands.ComputeSurfaceVolumeAsync(parameters),
-
-      // Alignments
-      "listAlignments" => AlignmentCommands.ListAlignmentsAsync(),
-      "getAlignment" => AlignmentCommands.GetAlignmentAsync(parameters),
-      "createAlignment" => AlignmentCommands.CreateAlignmentAsync(parameters),
-      "deleteAlignment" => AlignmentCommands.DeleteAlignmentAsync(parameters),
-      "alignmentStationToPoint" => AlignmentCommands.StationToPointAsync(parameters),
-      "alignmentPointToStation" => AlignmentCommands.PointToStationAsync(parameters),
-
-      // Profiles
-      "listProfiles" => ProfileCommands.ListProfilesAsync(parameters),
-      "getProfile" => ProfileCommands.GetProfileAsync(parameters),
-      "getProfileElevation" => ProfileCommands.GetProfileElevationAsync(parameters),
-      "createProfileFromSurface" => ProfileCommands.CreateProfileFromSurfaceAsync(parameters),
-      "createLayoutProfile" => ProfileCommands.CreateLayoutProfileAsync(parameters),
-      "deleteProfile" => ProfileCommands.DeleteProfileAsync(parameters),
-
-      // Corridors
-      "listCorridors" => CorridorCommands.ListCorridorsAsync(),
-      "getCorridor" => CorridorCommands.GetCorridorAsync(parameters),
-      "rebuildCorridor" => CorridorCommands.RebuildCorridorAsync(parameters),
-      "getCorridorSurfaces" => CorridorCommands.GetCorridorSurfacesAsync(parameters),
-      "getCorridorFeatureLines" => CorridorCommands.GetCorridorFeatureLinesAsync(parameters),
-      "computeCorridorVolumes" => CorridorCommands.ComputeCorridorVolumesAsync(parameters),
-
-      // Pipe Networks
-      "listPipeNetworks" => PipeNetworkCommands.ListPipeNetworksAsync(),
-      "getPipeNetwork" => PipeNetworkCommands.GetPipeNetworkAsync(parameters),
-      "getPipe" => PipeNetworkCommands.GetPipeAsync(parameters),
-      "getStructure" => PipeNetworkCommands.GetStructureAsync(parameters),
-      "createPipeNetwork" => PipeNetworkCommands.CreatePipeNetworkAsync(parameters),
-      "addPipeToNetwork" => PipeNetworkCommands.AddPipeToNetworkAsync(parameters),
-      "addStructureToNetwork" => PipeNetworkCommands.AddStructureToNetworkAsync(parameters),
-      "checkPipeNetworkInterference" => PipeNetworkCommands.CheckPipeNetworkInterferenceAsync(parameters),
-
-      // Unknown method
       _ => throw new JsonRpcDispatchException(
         "CIVIL3D.INVALID_INPUT",
-        $"Plugin method '{method}' is not implemented yet."
+        $"Unknown method '{method}'. Available: executeCode, getCivil3DHealth"
       ),
     };
+  }
+
+  /// <summary>
+  /// Execute C# code via Roslyn in the Civil 3D context.
+  /// </summary>
+  private static async Task<object?> ExecuteCodeAsync(JsonObject? parameters)
+  {
+    var code = PluginRuntime.GetRequiredString(parameters, "code");
+    var readOnly = parameters?["readOnly"]?.GetValue<bool>() ?? false;
+    var description = PluginRuntime.GetOptionalString(parameters, "description") ?? "Script execution";
+
+    // Log the execution
+    System.Diagnostics.Debug.WriteLine($"[C3D-MCP] {(readOnly ? "QUERY" : "EXECUTE")}: {description}");
+
+    // Execute on Civil 3D main thread with proper document locking
+    return await CivilExecution.ExecuteAsync((doc, civilDoc, db, tr) =>
+    {
+      var context = new ScriptContext(doc, civilDoc, db, tr);
+
+      // Run the Roslyn script synchronously within the command context
+      // (we're already on the main thread here)
+      var task = RoslynExecutor.ExecuteAsync(code, context);
+      task.Wait(); // Safe because we're in ExecuteInCommandContextAsync
+
+      return task.Result;
+    }, write: !readOnly);
+  }
+
+  /// <summary>Health check — verifies the plugin is alive and Civil 3D is responsive.</summary>
+  private static Task<object?> GetHealthAsync()
+  {
+    return CivilExecution.ReadAsync<object?>((doc, civilDoc, db, tr) =>
+    {
+      return new
+      {
+        connected = true,
+        drawingName = doc.Name,
+        mode = "code_execution",
+        roslyn = true,
+      };
+    });
   }
 }

@@ -1,68 +1,100 @@
-# Civil 3D MCP Server
+# Civil 3D MCP Server — Code Execution Architecture
 
-An MCP (Model Context Protocol) server that enables AI assistants (Claude, Cline, etc.) to interact with Autodesk Civil 3D through natural language.
+An MCP server that enables AI assistants to **write and execute C# code** directly inside Autodesk Civil 3D. Instead of fixed tools, the AI generates code that runs with full API access.
 
 ## Architecture
 
 ```
 ┌─────────────────┐     stdio      ┌──────────────────┐     TCP/JSON-RPC    ┌──────────────────┐
 │   AI Assistant   │ ◄────────────► │  MCP Server (TS) │ ◄──────────────────► │  Civil 3D Plugin │
-│ (Claude, Cline)  │               │   Node.js         │     port 8080       │   (.NET 8.0 C#)  │
+│ (Claude, Cline)  │               │   3 meta-tools    │     port 8080       │  Roslyn Engine   │
 └─────────────────┘               └──────────────────┘                      └──────────────────┘
-                                                                                     │
-                                                                              Civil 3D API
-                                                                            (Surfaces, Alignments,
-                                                                             Points, Corridors...)
+                                         │                                         │
+                                    Skills Library                           C# Code Execution
+                                   (.skill.md files)                      (full Civil 3D API)
 ```
 
-The system has two components:
-1. **MCP Server** (TypeScript/Node.js) — Communicates with AI assistants via MCP protocol
-2. **Civil 3D Plugin** (C# .NET 8.0) — Runs inside Civil 3D and executes API commands
+## 3 Meta-Tools
 
-## Available Tools
+| Tool | Purpose | Safety |
+|------|---------|--------|
+| `civil3d_execute` | Execute C# code with **write** access (transaction committed) | ⚠️ Modifies drawing |
+| `civil3d_query` | Execute C# code **read-only** (no commit) | ✅ No side effects |
+| `civil3d_skills` | Browse/search/read code skill templates | ✅ Metadata only |
 
-| Tool | Actions | Description |
-|------|---------|-------------|
-| `civil3d_health` | health | Check plugin connectivity |
-| `civil3d_drawing` | info, settings, save, undo, redo, list_object_types, get_selected | Drawing operations |
-| `civil3d_surface` | list, get, get_elevation, get_statistics, create, delete, add_points, add_breakline, add_boundary, extract_contours, compute_volume | Surface management |
-| `civil3d_alignment` | list, get, create, delete, station_to_point, point_to_station | Alignment operations |
-| `civil3d_profile` | list, get, get_elevation, create_from_surface, create_layout, delete | Profile management |
-| `civil3d_corridor` | list, get, rebuild, get_surfaces, get_feature_lines, compute_volumes | Corridor operations |
-| `civil3d_pipe` | list_networks, get_network, get_pipe, get_structure, create_network, add_pipe, add_structure, check_interference | Pipe networks |
-| `civil3d_point` | list, get, create, delete, list_groups, import | COGO points |
-| `civil3d_geometry` | create_line, create_polyline, create_3d_polyline, create_text, create_mtext | Basic AutoCAD geometry |
+### How It Works
+
+1. **AI reads a skill** → Gets a documented C# code template
+2. **AI adapts the code** → Fills in parameters, combines patterns
+3. **AI sends code** → Via `civil3d_execute` or `civil3d_query`
+4. **Roslyn compiles + runs** → Inside Civil 3D with full API access
+5. **Results return as JSON** → Back to the AI
+
+### Example Interaction
+
+```
+User: "What surfaces are in my drawing?"
+
+AI: Uses civil3d_query with:
+  var surfaces = new List<object>();
+  foreach (ObjectId id in CivilDoc.GetSurfaceIds()) {
+    var s = Transaction.GetObject(id, OpenMode.ForRead) as TinSurface;
+    surfaces.Add(new { s.Name, s.Layer });
+  }
+  return surfaces;
+
+Result: [{ "Name": "EG", "Layer": "C-TOPO-EG" }, ...]
+```
+
+## Skills Library
+
+Skills are documented C# code templates in `skills/`:
+
+```
+skills/
+├── surfaces/           # Surface operations
+├── alignments/         # Alignment + station/offset
+├── points/             # COGO points
+├── geometry/           # Lines, polylines, text
+├── drawing/            # Drawing info
+└── workflows/          # Complex multi-object operations
+```
+
+### Script Globals
+
+Code executed via `civil3d_execute` or `civil3d_query` has access to:
+
+| Global | Type | Description |
+|--------|------|-------------|
+| `Document` | `Document` | Active AutoCAD document |
+| `CivilDoc` | `CivilDocument` | Active Civil 3D document |
+| `Database` | `Database` | Document database |
+| `Transaction` | `Transaction` | Active transaction |
+| `Editor` | `Editor` | Document editor |
+
+All Civil 3D namespaces are auto-imported.
 
 ## Setup
 
-### 1. Build the MCP Server
-
+### 1. Build MCP Server
 ```bash
-npm install
-npm run build
+npm install && npm run build
 ```
 
-### 2. Build the Civil 3D Plugin
-
-1. Copy the required DLLs from your Civil 3D installation to `C_References/` (see [C_References/README.md](C_References/README.md))
-2. Build the plugin:
-
+### 2. Build Plugin
 ```bash
+# Copy DLLs from Civil 3D to C_References/ (see C_References/README.md)
 cd plugin/Civil3dMcpPlugin
 dotnet build
 ```
 
-### 3. Load the Plugin in Civil 3D
+### 3. Load in Civil 3D
+```
+NETLOAD → select Civil3dMcpPlugin.dll
+C3DMCPSTATUS → verify running
+```
 
-1. Open Civil 3D 2025+
-2. Type `NETLOAD` in the command line
-3. Browse to `plugin/Civil3dMcpPlugin/bin/Debug/net8.0-windows/Civil3dMcpPlugin.dll`
-4. The plugin starts automatically. Use `C3DMCPSTATUS` to verify.
-
-### 4. Configure Your AI Assistant
-
-**Claude Desktop** — Add to `claude_desktop_config.json`:
-
+### 4. Configure AI
 ```json
 {
   "mcpServers": {
@@ -78,19 +110,21 @@ dotnet build
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CIVIL3D_HOST` | `localhost` | Civil 3D plugin host |
-| `CIVIL3D_PORT` | `8080` | Civil 3D plugin port |
-| `CIVIL3D_CONNECT_TIMEOUT` | `5000` | Connection timeout (ms) |
-| `CIVIL3D_COMMAND_TIMEOUT` | `120000` | Command execution timeout (ms) |
-| `LOG_LEVEL` | `info` | Log level (debug, info, warn, error) |
+| `CIVIL3D_HOST` | `localhost` | Plugin host |
+| `CIVIL3D_PORT` | `8080` | Plugin port |
+| `CIVIL3D_COMMAND_TIMEOUT` | `120000` | Execution timeout (ms) |
+| `LOG_LEVEL` | `info` | Log level |
 
-## Plugin Commands
+## Security
 
-| Command | Description |
-|---------|-------------|
-| `C3DMCPSTART` | Start the TCP listener |
-| `C3DMCPSTOP` | Stop the TCP listener |
-| `C3DMCPSTATUS` | Check listener status |
+The Roslyn sandbox blocks:
+- Process execution (`Process.Start`)
+- File deletion (`File.Delete`)
+- Network requests (`HttpClient`, `Sockets`)
+- Registry access
+- Dynamic assembly loading
+
+All Civil 3D API operations are allowed.
 
 ## License
 
