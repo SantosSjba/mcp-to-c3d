@@ -30,18 +30,21 @@ function Get-TargetFramework($year) {
 function Get-AutodeskSearchRoots {
     $roots = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
 
-    $candidates = @(
+    $candidates = [System.Collections.Generic.List[string]]::new()
+    foreach ($path in @(
         "C:\Program Files\Autodesk",
         "D:\Program Files\Autodesk",
         "E:\Program Files\Autodesk",
         "F:\Program Files\Autodesk"
-    )
+    )) {
+        $candidates.Add($path)
+    }
 
     Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue | ForEach-Object {
         $letter = $_.Root.TrimEnd('\')
         if ($letter) {
-            [void]$candidates.Add((Join-Path $letter "Program Files\Autodesk"))
-            [void]$candidates.Add((Join-Path $letter "Autodesk"))
+            $candidates.Add((Join-Path $letter "Program Files\Autodesk"))
+            $candidates.Add((Join-Path $letter "Autodesk"))
         }
     }
 
