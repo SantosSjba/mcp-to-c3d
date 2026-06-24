@@ -1,0 +1,11 @@
+<Project>
+  <!--
+    Civil 3D / AutoCAD reference paths.
+    Regenerate with: npm run setup
+  -->
+  <PropertyGroup>
+    <AutoCADInstallPath>C:\Program Files\Autodesk\AutoCAD 2027</AutoCADInstallPath>
+    <Civil3dTargetFramework>net10.0-windows</Civil3dTargetFramework>
+    <AutoCADYear>2027</AutoCADYear>
+  </PropertyGroup>
+</Project>

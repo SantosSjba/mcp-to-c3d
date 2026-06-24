@@ -1,6 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
+  <Import Project="Civil3dMcpPlugin.References.props" />
+
   <PropertyGroup>
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <TargetFramework>$(Civil3dTargetFramework)</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <NoWarn>$(NoWarn);MSB3277</NoWarn>
@@ -14,23 +16,23 @@
 
   <ItemGroup>
     <Reference Include="accoremgd">
-      <HintPath>C:\Program Files\Autodesk\AutoCAD 2027\accoremgd.dll</HintPath>
+      <HintPath>$(AutoCADInstallPath)\accoremgd.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Acdbmgd">
-      <HintPath>C:\Program Files\Autodesk\AutoCAD 2027\AcDbMgd.dll</HintPath>
+      <HintPath>$(AutoCADInstallPath)\AcDbMgd.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Acmgd">
-      <HintPath>C:\Program Files\Autodesk\AutoCAD 2027\acmgd.dll</HintPath>
+      <HintPath>$(AutoCADInstallPath)\acmgd.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="AecBaseMgd">
-      <HintPath>C:\Program Files\Autodesk\AutoCAD 2027\ACA\AecBaseMgd.dll</HintPath>
+      <HintPath>$(AutoCADInstallPath)\ACA\AecBaseMgd.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="AeccDbMgd">
-      <HintPath>C:\Program Files\Autodesk\AutoCAD 2027\C3D\AeccDbMgd.dll</HintPath>
+      <HintPath>$(AutoCADInstallPath)\C3D\AeccDbMgd.dll</HintPath>
       <Private>False</Private>
     </Reference>
   </ItemGroup>

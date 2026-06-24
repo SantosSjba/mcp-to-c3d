@@ -44,7 +44,8 @@ public static class ScriptSandbox
       {
         throw new JsonRpcDispatchException(
           "CIVIL3D.SANDBOX_VIOLATION",
-          $"Script blocked: {reason}. Pattern: {pattern}"
+          $"Script blocked: {reason}.",
+          new { pattern, reason }
         );
       }
     }

@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
@@ -17,12 +18,14 @@ public sealed record PluginStatus(
 /// </summary>
 public sealed class JsonRpcDispatchException : Exception
 {
-  public JsonRpcDispatchException(string code, string message) : base(message)
+  public JsonRpcDispatchException(string code, string message, object? errorData = null) : base(message)
   {
     Code = code;
+    ErrorData = errorData;
   }
 
   public string Code { get; }
+  public object? ErrorData { get; }
 }
 
 /// <summary>
@@ -31,9 +34,22 @@ public sealed class JsonRpcDispatchException : Exception
 /// </summary>
 public static class PluginRuntime
 {
-  public const int Port = 8080;
+  public const int DefaultPort = 8080;
+
+  /// <summary>TCP port read from CIVIL3D_PORT env var, default 8080.</summary>
+  public static int Port
+  {
+    get
+    {
+      var env = Environment.GetEnvironmentVariable("CIVIL3D_PORT");
+      return int.TryParse(env, out var port) && port is > 0 and <= 65535
+        ? port
+        : DefaultPort;
+    }
+  }
 
   private static readonly object Sync = new();
+  private static readonly SemaphoreSlim RequestGate = new(1, 1);
   private static RpcTcpServer? _server;
   private static int _queueDepth;
   private static int _activeOperations;
@@ -108,6 +124,15 @@ public static class PluginRuntime
 
     lock (Sync) { _queueDepth++; }
 
+    await RequestGate.WaitAsync(cancellationToken);
+
+    var description = GetOptionalString(parameters, "description");
+    var timeoutMs = GetOperationTimeoutMs(method, parameters);
+    var sw = Stopwatch.StartNew();
+
+    using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+    timeoutCts.CancelAfter(timeoutMs);
+
     try
     {
       lock (Sync)
@@ -117,25 +142,85 @@ public static class PluginRuntime
         _currentOperation = method;
       }
 
-      var result = await CommandDispatcher.DispatchAsync(method, parameters, cancellationToken);
+      OperationTracker.Begin(method, description);
+
+      var result = await CommandDispatcher.DispatchAsync(method, parameters, timeoutCts.Token);
+      sw.Stop();
+      AuditLogger.LogSuccess(method, description, sw.ElapsedMilliseconds);
       return SerializeResult(id, result);
     }
     catch (JsonRpcDispatchException ex)
     {
-      return SerializeError(id, ex.Code, ex.Message);
+      sw.Stop();
+      AuditLogger.LogFailure(method, description, sw.ElapsedMilliseconds, ex.Code, ex.Message);
+      return SerializeError(id, ex.Code, ex.Message, ex.ErrorData);
+    }
+    catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+    {
+      sw.Stop();
+      var message = $"Operation timed out after {timeoutMs}ms.";
+      AuditLogger.LogFailure(method, description, sw.ElapsedMilliseconds, "CIVIL3D.TIMEOUT", message);
+      return SerializeError(id, "CIVIL3D.TIMEOUT", message, new { timeoutMs, method });
     }
     catch (Exception ex)
     {
-      return SerializeError(id, "CIVIL3D.TRANSACTION_FAILED", ex.Message);
+      sw.Stop();
+      AuditLogger.LogFailure(method, description, sw.ElapsedMilliseconds, "CIVIL3D.TRANSACTION_FAILED", ex.Message);
+      return SerializeError(
+        id,
+        "CIVIL3D.TRANSACTION_FAILED",
+        ex.Message,
+        new { type = ex.GetType().Name, stackTrace = ex.StackTrace }
+      );
     }
     finally
     {
+      OperationTracker.End();
+
       lock (Sync)
       {
         _activeOperations = Math.Max(0, _activeOperations - 1);
         _currentOperation = _activeOperations == 0 ? null : _currentOperation;
       }
+
+      RequestGate.Release();
     }
+  }
+
+  /// <summary>Resolve operation timeout from params, method defaults, or environment.</summary>
+  public static int GetOperationTimeoutMs(string method, JsonObject? parameters)
+  {
+    var fromParams = GetOptionalInt(parameters, "timeoutMs");
+    if (fromParams is > 0) return fromParams.Value;
+
+    var envKey = method switch
+    {
+      "executeCode" => "CIVIL3D_EXECUTE_TIMEOUT_MS",
+      "executeNativeCommand" => "CIVIL3D_COMMAND_TIMEOUT_MS",
+      "discoverDrawing" => "CIVIL3D_DISCOVER_TIMEOUT_MS",
+      "sessionExecute" => "CIVIL3D_EXECUTE_TIMEOUT_MS",
+      _ => "CIVIL3D_DEFAULT_TIMEOUT_MS",
+    };
+
+    var env = Environment.GetEnvironmentVariable(envKey)
+      ?? Environment.GetEnvironmentVariable("CIVIL3D_DEFAULT_TIMEOUT_MS");
+
+    if (int.TryParse(env, out var ms) && ms > 0)
+      return ms;
+
+    return method switch
+    {
+      "discoverDrawing" => 60_000,
+      "executeNativeCommand" => 120_000,
+      _ => 120_000,
+    };
+  }
+
+  public static OperationStatus GetOperationStatus()
+  {
+    int queueDepth;
+    lock (Sync) { queueDepth = _queueDepth; }
+    return OperationTracker.GetStatus(queueDepth, SessionManager.ActiveCount);
   }
 
   // ── Parameter extraction helpers ──
@@ -192,17 +277,24 @@ public static class PluginRuntime
     return response.ToJsonString(JsonSerializerOptions);
   }
 
-  private static string SerializeError(JsonNode? id, string code, string message)
+  private static string SerializeError(JsonNode? id, string code, string message, object? data = null)
   {
+    var error = new JsonObject
+    {
+      ["code"] = code,
+      ["message"] = message,
+    };
+
+    if (data != null)
+    {
+      error["data"] = JsonSerializer.SerializeToNode(data, JsonSerializerOptions);
+    }
+
     var response = new JsonObject
     {
       ["jsonrpc"] = "2.0",
       ["id"] = id,
-      ["error"] = new JsonObject
-      {
-        ["code"] = code,
-        ["message"] = message,
-      },
+      ["error"] = error,
     };
     return response.ToJsonString(JsonSerializerOptions);
   }

@@ -59,43 +59,66 @@ public static class RoslynExecutor
   /// <param name="code">C# code to execute</param>
   /// <param name="context">Globals (Document, CivilDoc, Database, Transaction, Editor)</param>
   /// <returns>The script's return value, or null</returns>
-  public static async Task<object?> ExecuteAsync(string code, ScriptContext context)
+  public static async Task<object?> ExecuteAsync(
+    string code,
+    ScriptContext context,
+    CancellationToken cancellationToken = default,
+    TimeSpan? timeout = null)
   {
-    // Validate with sandbox
     ScriptSandbox.Validate(code);
 
     var options = BuildOptions();
     var codeHash = code.GetHashCode();
 
-    // Try cache first
     if (!_scriptCache.TryGetValue(codeHash, out var script))
     {
       script = CSharpScript.Create<object>(code, options, typeof(ScriptContext));
-      script.Compile(); // Pre-compile for better error messages
+      script.Compile();
       _scriptCache.TryAdd(codeHash, script);
     }
 
-    // Execute with timeout
-    using var cts = new CancellationTokenSource(Timeout);
+    using var localCts = timeout.HasValue
+      ? new CancellationTokenSource(timeout.Value)
+      : new CancellationTokenSource(Timeout);
+
+    using var linkedCts = cancellationToken.CanBeCanceled
+      ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, localCts.Token)
+      : null;
+
+    var token = linkedCts?.Token ?? localCts.Token;
 
     try
     {
-      var result = await script.RunAsync(context, cts.Token);
+      var result = await script.RunAsync(context, token);
       return result.ReturnValue;
     }
     catch (OperationCanceledException)
     {
       throw new JsonRpcDispatchException(
         "CIVIL3D.TIMEOUT",
-        $"Script execution timed out after {Timeout.TotalSeconds}s."
+        $"Script execution timed out after {(timeout ?? Timeout).TotalSeconds}s."
       );
     }
     catch (CompilationErrorException ex)
     {
+      var diagnostics = ex.Diagnostics.Select(d =>
+      {
+        var span = d.Location.GetLineSpan();
+        return new
+        {
+          id = d.Id,
+          severity = d.Severity.ToString(),
+          message = d.GetMessage(),
+          line = span.StartLinePosition.Line + 1,
+          column = span.StartLinePosition.Character + 1,
+        };
+      }).ToArray();
+
       var errors = string.Join("\n", ex.Diagnostics.Select(d => d.ToString()));
       throw new JsonRpcDispatchException(
         "CIVIL3D.COMPILATION_ERROR",
-        $"C# compilation failed:\n{errors}"
+        $"C# compilation failed:\n{errors}",
+        new { diagnostics }
       );
     }
   }

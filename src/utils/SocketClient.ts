@@ -1,8 +1,13 @@
 import * as net from "net";
+import { Civil3dRpcError, type Civil3dRpcErrorData } from "./civil3dError.js";
 import { createLogger } from "./logger.js";
+import { getCommandTimeoutMs } from "./timeouts.js";
 
 const log = createLogger("SocketClient");
-const COMMAND_TIMEOUT_MS = parseInt(process.env.CIVIL3D_COMMAND_TIMEOUT ?? "120000", 10);
+
+export interface SendCommandOptions {
+  timeoutMs?: number;
+}
 
 export class ApplicationClientConnection {
   host: string;
@@ -97,7 +102,13 @@ export class ApplicationClientConnection {
   /**
    * Send a JSON-RPC command to the Civil 3D plugin and wait for a response.
    */
-  public sendCommand(command: string, params: any = {}): Promise<any> {
+  public sendCommand(
+    command: string,
+    params: Record<string, unknown> = {},
+    options?: SendCommandOptions
+  ): Promise<unknown> {
+    const timeoutMs = getCommandTimeoutMs(command, options?.timeoutMs);
+
     return new Promise((resolve, reject) => {
       try {
         if (!this.isConnected) {
@@ -117,8 +128,13 @@ export class ApplicationClientConnection {
           try {
             const response = JSON.parse(responseData);
             if (response.error) {
+              const err = response.error;
               reject(
-                new Error(response.error.message || "Unknown error from Civil 3D plugin")
+                new Civil3dRpcError(
+                  err.code ?? "CIVIL3D.UNKNOWN",
+                  err.message ?? "Unknown error from Civil 3D plugin",
+                  err.data as Civil3dRpcErrorData | undefined
+                )
               );
             } else {
               resolve(response.result);
@@ -142,11 +158,11 @@ export class ApplicationClientConnection {
             log.warn("Command timed out", {
               method: command,
               requestId,
-              timeoutMs: COMMAND_TIMEOUT_MS,
+              timeoutMs,
             });
-            reject(new Error(`Command timed out after ${COMMAND_TIMEOUT_MS}ms: ${command}`));
+            reject(new Error(`Command timed out after ${timeoutMs}ms: ${command}`));
           }
-        }, COMMAND_TIMEOUT_MS);
+        }, timeoutMs);
       } catch (error) {
         reject(error);
       }

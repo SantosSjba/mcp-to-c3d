@@ -10,7 +10,9 @@
   "scripts": {
     "clean": "rimraf build",
     "prebuild": "npm run clean",
-    "build": "tsc"
+    "build": "tsc",
+    "setup": "powershell -ExecutionPolicy Bypass -File scripts/setup.ps1",
+    "setup:plugin": "dotnet build plugin/Civil3dMcpPlugin -c Release"
   },
   "files": [
     "build"
