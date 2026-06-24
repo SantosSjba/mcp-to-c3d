@@ -30,6 +30,9 @@ export function registerCommandTool(server: McpServer) {
         .optional()
         .describe("Max wait time in ms when waitForCompletion is true (default: 300000)"),
       description: z.string().optional().describe("Brief description for logging"),
+      confirmed: z.boolean().optional().describe(
+        "Set true to confirm destructive commands (ERASE, PURGE, etc.)"
+      ),
     },
     async (args) => {
       try {
@@ -42,10 +45,11 @@ export function registerCommandTool(server: McpServer) {
           await client.sendCommand(
             "executeNativeCommand",
             {
-              command: args.command,
-              waitForCompletion: args.waitForCompletion ?? true,
-              timeoutMs: args.timeoutMs,
-            },
+            command: args.command,
+            waitForCompletion: args.waitForCompletion ?? true,
+            timeoutMs: args.timeoutMs,
+            confirmed: args.confirmed ?? false,
+          },
             { timeoutMs: args.timeoutMs }
           )
         );

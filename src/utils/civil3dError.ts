@@ -6,6 +6,12 @@ export interface Civil3dRpcErrorData {
     line: number;
     column: number;
   }>;
+  destructiveReasons?: string[];
+  operationType?: string;
+  hint?: string;
+  allowedExportPaths?: string[];
+  blockedPaths?: string[];
+  sandboxMode?: string;
   pattern?: string;
   reason?: string;
   type?: string;
@@ -29,7 +35,13 @@ export function formatCivil3dError(error: unknown): string {
   if (error instanceof Civil3dRpcError) {
     let text = `[${error.code}] ${error.message}`;
 
-    if (error.data?.diagnostics?.length) {
+    if (error.code === "CIVIL3D.CONFIRMATION_REQUIRED" && error.data?.destructiveReasons?.length) {
+      text += "\n\nDestructive operations detected:";
+      for (const r of error.data.destructiveReasons) {
+        text += `\n  - ${r}`;
+      }
+      text += "\n\nRe-run with confirmed: true after user approval.";
+    } else if (error.data?.diagnostics?.length) {
       text += "\n\nCompilation diagnostics:";
       for (const d of error.data.diagnostics) {
         text += `\n  Line ${d.line}, Col ${d.column} (${d.severity}): ${d.message}`;

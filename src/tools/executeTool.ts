@@ -43,6 +43,9 @@ export function registerExecuteTool(server: McpServer) {
       timeoutMs: z.number().optional().describe(
         "Max execution time in ms (default: 120000). Increase for heavy operations."
       ),
+      confirmed: z.boolean().optional().describe(
+        "Set true to confirm destructive operations (erase, delete, purge). Required when policy demands it."
+      ),
     },
     async (args) => {
       try {
@@ -57,6 +60,7 @@ export function registerExecuteTool(server: McpServer) {
               readOnly: false,
               description: args.description,
               timeoutMs: args.timeoutMs,
+              confirmed: args.confirmed ?? false,
             },
             { timeoutMs: args.timeoutMs }
           )

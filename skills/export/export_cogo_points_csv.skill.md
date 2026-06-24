@@ -35,7 +35,7 @@ foreach (ObjectId id in CivilDoc.CogoPoints)
     ));
 }
 
-System.IO.File.WriteAllLines(filePath, lines);
+WriteExportLines(filePath, lines);
 
 return new {
     success = true,

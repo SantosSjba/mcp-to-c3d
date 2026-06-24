@@ -29,12 +29,13 @@ public static class CommandDispatcher
       "getCivil3DHealth" => await GetHealthAsync(),
       "getOperationStatus" => GetOperationStatus(),
       "getAuditLog" => GetAuditLog(parameters),
+      "getSecurityPolicy" => GetSecurityPolicy(),
 
       _ => throw new JsonRpcDispatchException(
         "CIVIL3D.INVALID_INPUT",
         $"Unknown method '{method}'. Available: executeCode, executeNativeCommand, " +
         "beginSession, sessionExecute, sessionCommit, sessionAbort, discoverDrawing, " +
-        "getCivil3DHealth, getOperationStatus, getAuditLog"
+        "getCivil3DHealth, getOperationStatus, getAuditLog, getSecurityPolicy"
       ),
     };
   }
@@ -48,13 +49,14 @@ public static class CommandDispatcher
     var description = PluginRuntime.GetOptionalString(parameters, "description") ?? "Script execution";
     var timeoutMs = PluginRuntime.GetOperationTimeoutMs("executeCode", parameters);
     var timeout = TimeSpan.FromMilliseconds(timeoutMs);
+    var confirmed = parameters?["confirmed"]?.GetValue<bool>() ?? false;
 
     Debug.WriteLine($"[C3D-MCP] {(readOnly ? "QUERY" : "EXECUTE")}: {description}");
 
     var raw = await CivilExecution.ExecuteAsync((doc, civilDoc, db, tr) =>
     {
       var context = new ScriptContext(doc, civilDoc, db, tr);
-      var task = RoslynExecutor.ExecuteAsync(code, context, cancellationToken, timeout);
+      var task = RoslynExecutor.ExecuteAsync(code, context, cancellationToken, timeout, confirmed, readOnly);
       task.Wait(cancellationToken);
       return task.Result;
     }, write: !readOnly);
@@ -67,6 +69,10 @@ public static class CommandDispatcher
     CancellationToken cancellationToken)
   {
     var command = PluginRuntime.GetRequiredString(parameters, "command");
+    var confirmed = parameters?["confirmed"]?.GetValue<bool>() ?? false;
+    var destructiveReasons = DestructiveOperationDetector.DetectInCommand(command);
+    DestructiveOperationDetector.RequireConfirmationIfNeeded(destructiveReasons, confirmed, "command");
+
     var waitForCompletion = parameters?["waitForCompletion"]?.GetValue<bool>() ?? true;
     var timeoutMs = parameters?["timeoutMs"]?.GetValue<int>()
       ?? PluginRuntime.GetOperationTimeoutMs("executeNativeCommand", parameters);
@@ -147,6 +153,7 @@ public static class CommandDispatcher
     var description = PluginRuntime.GetOptionalString(parameters, "description") ?? "Session script";
     var timeoutMs = PluginRuntime.GetOperationTimeoutMs("sessionExecute", parameters);
     var timeout = TimeSpan.FromMilliseconds(timeoutMs);
+    var confirmed = parameters?["confirmed"]?.GetValue<bool>() ?? false;
 
     Debug.WriteLine($"[C3D-MCP] SESSION: {description}");
 
@@ -156,7 +163,7 @@ public static class CommandDispatcher
     {
       var session = SessionManager.GetRequired(sessionId);
       var context = new ScriptContext(session.Document, session.CivilDoc, session.Database, session.Transaction);
-      var task = RoslynExecutor.ExecuteAsync(code, context, cancellationToken, timeout);
+      var task = RoslynExecutor.ExecuteAsync(code, context, cancellationToken, timeout, confirmed, readOnly: false);
       task.Wait(cancellationToken);
       raw = task.Result;
       await Task.CompletedTask;
@@ -303,4 +310,6 @@ public static class CommandDispatcher
     var limit = parameters?["limit"]?.GetValue<int>() ?? 50;
     return AuditLogger.GetRecentEntries(limit);
   }
+
+  private static object? GetSecurityPolicy() => SecurityPolicy.Describe();
 }

@@ -14,7 +14,7 @@ An MCP server that enables AI assistants to **write and execute C# code** direct
                                    (.skill.md files)                      (full Civil 3D API)
 ```
 
-## 9 Meta-Tools
+## 10 Meta-Tools
 
 | Tool | Purpose | Safety |
 |------|---------|--------|
@@ -22,6 +22,7 @@ An MCP server that enables AI assistants to **write and execute C# code** direct
 | `civil3d_status` | Real-time operation progress and queue state | ✅ Read-only |
 | `civil3d_discover` | Inventory drawing objects without writing C# | ✅ Read-only |
 | `civil3d_audit` | Read audit log of past operations | ✅ Read-only |
+| `civil3d_security` | Read sandbox mode, export paths, confirmation policy | ✅ Read-only |
 | `civil3d_query` | Execute C# code **read-only** | ✅ No side effects |
 | `civil3d_execute` | Execute C# code with **write** access | ⚠️ Modifies drawing |
 | `civil3d_command` | Execute native Civil 3D command strings | ⚠️ May modify drawing |
@@ -147,6 +148,9 @@ C3DMCPSTATUS → verify running
 | `CIVIL3D_COMMAND_TIMEOUT_MS` | `300000` | Native command timeout |
 | `CIVIL3D_DISCOVER_TIMEOUT_MS` | `60000` | Discover inventory timeout |
 | `CIVIL3D_AUDIT_LOG` | `%LOCALAPPDATA%\Civil3dMcp\audit.jsonl` | Audit log file path |
+| `CIVIL3D_SANDBOX_MODE` | `professional` | `strict` \| `professional` \| `unlocked` |
+| `CIVIL3D_REQUIRE_CONFIRMATION` | `true` | Require `confirmed: true` for destructive ops |
+| `CIVIL3D_ALLOWED_EXPORT_PATHS` | (see below) | Extra export folders, semicolon-separated |
 | `LOG_LEVEL` | `info` | Log level |
 
 ## Development Roadmap
@@ -155,14 +159,24 @@ See [ROADMAP.md](./ROADMAP.md) for the phased plan to reach professional full ac
 
 ## Security
 
-The Roslyn sandbox blocks:
-- Process execution (`Process.Start`)
-- File deletion (`File.Delete`)
-- Network requests (`HttpClient`, `Sockets`)
-- Registry access
-- Dynamic assembly loading
+Three sandbox modes via `CIVIL3D_SANDBOX_MODE`:
 
-All Civil 3D API operations are allowed.
+| Mode | File IO | Civil 3D API |
+|------|---------|--------------|
+| `strict` | Blocked — use `WriteExportFile()` only via blocked raw File.* | Full |
+| `professional` (default) | Only under allowed folders | Full |
+| `unlocked` | Unrestricted (delete still needs confirmation) | Full |
+
+**Default allowed export paths:** `%LOCALAPPDATA%\Civil3dMcp\Exports`, Desktop, Documents.  
+Add more with `CIVIL3D_ALLOWED_EXPORT_PATHS`.
+
+**Safe file helpers in scripts:** `WriteExportFile(path, content)`, `WriteExportLines(path, lines)`, `ReadImportFile(path)`, `AllowedExportPaths`.
+
+**Destructive operations** (erase, purge, delete) require `confirmed: true` when `CIVIL3D_REQUIRE_CONFIRMATION=true` (default). The tool returns `CIVIL3D.CONFIRMATION_REQUIRED` with the list of detected risks.
+
+Always blocked: process execution, network, registry, P/Invoke, dynamic assembly loading.
+
+Call `civil3d_security` to inspect the active policy before exports or destructive writes.
 
 ## License
 

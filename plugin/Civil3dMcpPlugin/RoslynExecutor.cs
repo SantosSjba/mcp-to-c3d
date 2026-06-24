@@ -63,9 +63,11 @@ public static class RoslynExecutor
     string code,
     ScriptContext context,
     CancellationToken cancellationToken = default,
-    TimeSpan? timeout = null)
+    TimeSpan? timeout = null,
+    bool confirmed = false,
+    bool readOnly = false)
   {
-    ScriptSandbox.Validate(code);
+    ScriptSandbox.Validate(code, confirmed, readOnly);
 
     var options = BuildOptions();
     var codeHash = code.GetHashCode();

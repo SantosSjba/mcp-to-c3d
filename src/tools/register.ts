@@ -1,4 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { registerSecurityTool } from "./securityTool.js";
 import { registerAuditTool } from "./auditTool.js";
 import { registerDiscoverTool } from "./discoverTool.js";
 import { registerCommandTool } from "./commandTool.js";
@@ -17,6 +18,7 @@ export async function registerTools(server: McpServer) {
   registerStatusTool(server);
   registerDiscoverTool(server);
   registerAuditTool(server);
+  registerSecurityTool(server);
   registerExecuteTool(server);
   registerQueryTool(server);
   registerCommandTool(server);

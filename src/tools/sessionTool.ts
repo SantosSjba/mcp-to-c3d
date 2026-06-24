@@ -29,6 +29,9 @@ export function registerSessionTool(server: McpServer) {
         .optional()
         .describe("C# code to run (required for execute action)"),
       description: z.string().optional().describe("Brief description for logging"),
+      confirmed: z.boolean().optional().describe(
+        "Set true to confirm destructive operations in session scripts"
+      ),
     },
     async (args) => {
       try {
@@ -62,6 +65,7 @@ export function registerSessionTool(server: McpServer) {
                 sessionId: args.sessionId,
                 code: args.code,
                 description: args.description,
+                confirmed: args.confirmed ?? false,
               })
             );
 

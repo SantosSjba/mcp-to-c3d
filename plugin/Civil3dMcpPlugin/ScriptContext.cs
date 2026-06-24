@@ -195,4 +195,32 @@ public class ScriptContext
   /// <summary>Convert Point3d to a JSON-friendly object.</summary>
   public object ToPoint(Point3d point)
     => ResultSerializer.Serialize(point)!;
+
+  // ── Safe file I/O (respects export policy) ──
+
+  /// <summary>Allowed export/import directories for the current security policy.</summary>
+  public IReadOnlyList<string> AllowedExportPaths => FileExportPolicy.GetAllowedPaths();
+
+  /// <summary>Write text to a file under an allowed export directory.</summary>
+  public string WriteExportFile(string path, string content)
+  {
+    var resolved = FileExportPolicy.ResolveAndValidate(path, forWrite: true);
+    File.WriteAllText(resolved, content);
+    return resolved;
+  }
+
+  /// <summary>Write lines to a CSV/text file under an allowed export directory.</summary>
+  public string WriteExportLines(string path, IEnumerable<string> lines)
+  {
+    var resolved = FileExportPolicy.ResolveAndValidate(path, forWrite: true);
+    File.WriteAllLines(resolved, lines);
+    return resolved;
+  }
+
+  /// <summary>Read text from a file under an allowed import directory.</summary>
+  public string ReadImportFile(string path)
+  {
+    var resolved = FileExportPolicy.ResolveAndValidate(path, forWrite: false);
+    return File.ReadAllText(resolved);
+  }
 }
