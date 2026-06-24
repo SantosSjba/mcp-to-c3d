@@ -99,10 +99,26 @@ All Civil 3D namespaces are auto-imported. Return values are auto-serialized (Ob
 npm run setup
 ```
 This interactive script will:
-1. Detect installed Civil 3D versions
+1. Detect installed Civil 3D versions (scans **C:, D:, and other drives**)
 2. Configure plugin DLL references automatically
 3. Build the MCP server and plugin
 4. Print MCP config for Cursor
+
+**Civil 3D on D: or custom folder?** Use one of these:
+
+```powershell
+# Option A — pass the path directly
+npm run setup -- -InstallPath "D:\Program Files\Autodesk\AutoCAD 2026"
+
+# Option B — environment variable (picked up automatically during scan)
+$env:CIVIL3D_INSTALL_PATH = "D:\Program Files\Autodesk\AutoCAD 2026"
+npm run setup
+
+# Option C — interactive: when the menu appears, press C and paste the path
+npm run setup
+```
+
+The path must be the **AutoCAD 20XX** folder that contains `C3D\AeccDbMgd.dll`.
 
 ### Manual setup
 
@@ -115,6 +131,7 @@ npm install && npm run build
 ```bash
 # References are in plugin/Civil3dMcpPlugin/Civil3dMcpPlugin.References.props
 # Regenerate with: npm run setup
+# Custom install path: npm run setup -- -InstallPath "D:\...\AutoCAD 2026"
 cd plugin/Civil3dMcpPlugin
 dotnet build
 ```

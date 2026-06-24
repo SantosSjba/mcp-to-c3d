@@ -1,8 +1,10 @@
 # Civil 3D MCP — Interactive Setup
 # Detects installed Civil 3D versions, configures plugin references, and builds.
+# Supports custom install paths (e.g. Civil 3D on D:).
 
 param(
     [string]$AutoSelectYear,
+    [string]$InstallPath,
     [switch]$SkipNpm,
     [switch]$SkipPlugin
 )
@@ -11,6 +13,7 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $PluginDir = Join-Path $RepoRoot "plugin\Civil3dMcpPlugin"
 $PropsFile = Join-Path $PluginDir "Civil3dMcpPlugin.References.props"
+$C3dMarker = Join-Path "C3D" "AeccDbMgd.dll"
 
 function Write-Step($msg) { Write-Host "`n==> $msg" -ForegroundColor Cyan }
 function Write-Ok($msg)   { Write-Host "  [OK] $msg" -ForegroundColor Green }
@@ -24,23 +27,108 @@ function Get-TargetFramework($year) {
     }
 }
 
-function Find-Civil3DInstalls {
-    $base = "C:\Program Files\Autodesk"
-    if (-not (Test-Path $base)) { return @() }
+function Get-AutodeskSearchRoots {
+    $roots = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
 
+    $candidates = @(
+        "C:\Program Files\Autodesk",
+        "D:\Program Files\Autodesk",
+        "E:\Program Files\Autodesk",
+        "F:\Program Files\Autodesk"
+    )
+
+    Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue | ForEach-Object {
+        $letter = $_.Root.TrimEnd('\')
+        if ($letter) {
+            [void]$candidates.Add((Join-Path $letter "Program Files\Autodesk"))
+            [void]$candidates.Add((Join-Path $letter "Autodesk"))
+        }
+    }
+
+    foreach ($path in $candidates) {
+        if (Test-Path $path) { [void]$roots.Add((Resolve-Path $path).Path) }
+    }
+
+    return @($roots)
+}
+
+function Get-YearFromFolderName($folderName) {
+    if ($folderName -match '(20\d{2})') { return $Matches[1] }
+    return "unknown"
+}
+
+function Test-Civil3DInstallPath([string]$Path) {
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
+    $resolved = $Path.Trim().Trim('"')
+    if (-not (Test-Path $resolved)) { return $false }
+    $full = (Resolve-Path $resolved).Path
+    return Test-Path (Join-Path $full $C3dMarker)
+}
+
+function New-InstallRecord([string]$Path) {
+    if (-not (Test-Civil3DInstallPath $Path)) {
+        throw "Invalid Civil 3D path: '$Path'. Expected folder containing C3D\AeccDbMgd.dll (e.g. D:\Program Files\Autodesk\AutoCAD 2026)."
+    }
+
+    $full = (Resolve-Path $Path.Trim().Trim('"')).Path
+    $year = Get-YearFromFolderName (Split-Path $full -Leaf)
+
+    return [PSCustomObject]@{
+        Year      = $year
+        Path      = $full
+        Framework = Get-TargetFramework $year
+        Source    = "custom"
+    }
+}
+
+function Find-Civil3DInstalls {
     $installs = @()
-    Get-ChildItem -Path $base -Directory -Filter "AutoCAD *" | ForEach-Object {
-        $year = ($_.Name -replace "AutoCAD ", "").Trim()
-        $c3dDll = Join-Path $_.FullName "C3D\AeccDbMgd.dll"
-        if (Test-Path $c3dDll) {
-            $installs += [PSCustomObject]@{
-                Year = $year
-                Path = $_.FullName
-                Framework = Get-TargetFramework $year
+    $seen = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+
+    foreach ($base in Get-AutodeskSearchRoots) {
+        Get-ChildItem -Path $base -Directory -Filter "AutoCAD *" -ErrorAction SilentlyContinue | ForEach-Object {
+            $c3dDll = Join-Path $_.FullName $C3dMarker
+            if ((Test-Path $c3dDll) -and $seen.Add($_.FullName)) {
+                $year = Get-YearFromFolderName $_.Name
+                $installs += [PSCustomObject]@{
+                    Year      = $year
+                    Path      = $_.FullName
+                    Framework = Get-TargetFramework $year
+                    Source    = "detected"
+                }
             }
         }
     }
-    return $installs | Sort-Object { [int]$_.Year } -Descending
+
+    $envPath = $env:CIVIL3D_INSTALL_PATH
+    if ($envPath -and (Test-Civil3DInstallPath $envPath) -and $seen.Add((Resolve-Path $envPath).Path)) {
+        $installs += New-InstallRecord $envPath
+        $installs[-1].Source = "env"
+    }
+
+    return $installs | Sort-Object { [int]($_.Year -replace '\D', '') } -Descending
+}
+
+function Read-CustomInstallPath {
+    Write-Host ""
+    Write-Host "  Enter the full path to your Civil 3D / AutoCAD folder." -ForegroundColor Yellow
+    Write-Host "  Example: D:\Program Files\Autodesk\AutoCAD 2026" -ForegroundColor DarkGray
+    Write-Host "  Must contain: C3D\AeccDbMgd.dll" -ForegroundColor DarkGray
+    Write-Host ""
+
+    while ($true) {
+        $inputPath = Read-Host "Civil 3D install path"
+        if ([string]::IsNullOrWhiteSpace($inputPath)) {
+            Write-Warn "Path cannot be empty."
+            continue
+        }
+
+        try {
+            return New-InstallRecord $inputPath
+        } catch {
+            Write-Warn $_.Exception.Message
+        }
+    }
 }
 
 function Write-PropsFile($install) {
@@ -85,41 +173,55 @@ Write-Host ""
 Write-Host "  Civil 3D MCP Setup" -ForegroundColor White -BackgroundColor DarkBlue
 Write-Host ""
 
-Write-Step "Scanning for Civil 3D installations..."
-$installs = Find-Civil3DInstalls
-
-if ($installs.Count -eq 0) {
-    Write-Warn "No Civil 3D installations found under C:\Program Files\Autodesk\AutoCAD *"
-    Write-Warn "Install Civil 3D or check the installation path."
-    exit 1
-}
-
-Write-Ok "Found $($installs.Count) installation(s):"
-for ($i = 0; $i -lt $installs.Count; $i++) {
-    $inst = $installs[$i]
-    Write-Host "  [$($i + 1)] Civil 3D $($inst.Year)  ($($inst.Framework))  $($inst.Path)"
-}
-
 $selected = $null
-if ($AutoSelectYear) {
-    $selected = $installs | Where-Object { $_.Year -eq $AutoSelectYear } | Select-Object -First 1
-    if (-not $selected) {
-        Write-Warn "Year $AutoSelectYear not found. Using newest."
-        $selected = $installs[0]
-    }
+
+if ($InstallPath) {
+    Write-Step "Using custom install path..."
+    $selected = New-InstallRecord $InstallPath
+    Write-Ok "Custom path: $($selected.Path)"
 } else {
-  Write-Host ""
-  $choice = Read-Host "Select version [1-$($installs.Count)] (default: 1 = newest)"
-  if ([string]::IsNullOrWhiteSpace($choice)) { $choice = "1" }
-  $index = [int]$choice - 1
-  if ($index -lt 0 -or $index -ge $installs.Count) {
-      Write-Warn "Invalid choice. Using newest."
-      $index = 0
-  }
-  $selected = $installs[$index]
+    Write-Step "Scanning for Civil 3D installations (C:, D:, and other drives)..."
+    $installs = @(Find-Civil3DInstalls)
+
+    if ($installs.Count -eq 0) {
+        Write-Warn "No Civil 3D installations found automatically."
+        Write-Warn "If Civil 3D is on another drive or folder, enter the path manually."
+        $selected = Read-CustomInstallPath
+    } else {
+        Write-Ok "Found $($installs.Count) installation(s):"
+        for ($i = 0; $i -lt $installs.Count; $i++) {
+            $inst = $installs[$i]
+            $tag = if ($inst.Source -eq "env") { " [CIVIL3D_INSTALL_PATH]" } else { "" }
+            Write-Host "  [$($i + 1)] Civil 3D $($inst.Year)  ($($inst.Framework))  $($inst.Path)$tag"
+        }
+        Write-Host "  [C] Enter custom install path manually"
+
+        if ($AutoSelectYear) {
+            $selected = $installs | Where-Object { $_.Year -eq $AutoSelectYear } | Select-Object -First 1
+            if (-not $selected) {
+                Write-Warn "Year $AutoSelectYear not found. Using newest."
+                $selected = $installs[0]
+            }
+        } else {
+            Write-Host ""
+            $choice = Read-Host "Select [1-$($installs.Count)] or C for custom path (default: 1)"
+            if ([string]::IsNullOrWhiteSpace($choice)) { $choice = "1" }
+
+            if ($choice.Trim().Equals("C", [StringComparison]::OrdinalIgnoreCase)) {
+                $selected = Read-CustomInstallPath
+            } else {
+                $index = [int]$choice - 1
+                if ($index -lt 0 -or $index -ge $installs.Count) {
+                    Write-Warn "Invalid choice. Using newest."
+                    $index = 0
+                }
+                $selected = $installs[$index]
+            }
+        }
+    }
 }
 
-Write-Ok "Selected: Civil 3D $($selected.Year)"
+Write-Ok "Selected: Civil 3D $($selected.Year) -> $($selected.Path)"
 Write-Step "Configuring plugin references..."
 Write-PropsFile $selected
 
@@ -149,4 +251,5 @@ if (-not $SkipPlugin) {
 
 Write-Host ""
 Write-Host "  Setup complete!" -ForegroundColor Green
+Write-Host "  Tip: pass -InstallPath `"D:\...\AutoCAD 2026`" to skip the menu next time." -ForegroundColor DarkGray
 Write-Host ""
